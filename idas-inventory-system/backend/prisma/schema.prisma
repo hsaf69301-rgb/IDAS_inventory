@@ -1,0 +1,655 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ───────────── Enums ─────────────
+enum RoleName {
+  ADMIN
+  TECHNICIAN
+  LECTURER
+  DEAN_REGISTRAR
+  STUDENT
+  UNIVERSITY_STAFF
+  TRAINEE
+}
+
+enum AssetStatus {
+  AVAILABLE
+  IN_USE
+  RESERVED
+  BORROWED
+  OVERDUE
+  UNDER_INSPECTION
+  UNDER_MAINTENANCE
+  UNDER_REPAIR
+  DAMAGED
+  MISSING
+  LOST
+  RETIRED
+  DISPOSED
+}
+
+enum AssetCondition {
+  NEW
+  EXCELLENT
+  GOOD
+  FAIR
+  POOR
+  DAMAGED
+  NON_FUNCTIONAL
+}
+
+enum LoanRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  ISSUED
+  RETURNED
+  CANCELLED
+}
+
+enum BookingStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum MaintenanceStatus {
+  REPORTED
+  DIAGNOSING
+  ASSIGNED
+  UNDER_REPAIR
+  REPAIRED
+  AWAITING_VERIFICATION
+  VERIFIED
+  CLOSED
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum Severity {
+  MINOR
+  MODERATE
+  MAJOR
+  CRITICAL
+}
+
+enum DamageStatus {
+  REPORTED
+  INVESTIGATING
+  RESOLVED
+}
+
+enum RecoveryStatus {
+  INVESTIGATING
+  RECOVERED
+  NOT_RECOVERED
+  WRITTEN_OFF
+}
+
+enum StocktakeStatus {
+  OPEN
+  COMPLETED
+}
+
+enum StocktakeResult {
+  VERIFIED
+  NOT_FOUND
+  WRONG_LOCATION
+  DAMAGED
+  NEEDS_INSPECTION
+}
+
+enum LocationType {
+  UNIVERSITY
+  FACULTY
+  DEPARTMENT
+  LAB
+  ROOM
+  RACK
+}
+
+enum NotificationType {
+  BOOKING_REQUESTED
+  BOOKING_APPROVED
+  BOOKING_REJECTED
+  BOOKING_CANCELLED
+  BOOKING_CONFLICT
+  BOOKING_UPCOMING
+  LOAN_REQUESTED
+  LOAN_APPROVED
+  LOAN_REJECTED
+  LOAN_DUE
+  LOAN_OVERDUE
+  DAMAGE_REPORTED
+  MAINTENANCE
+  REPAIR_COMPLETED
+  WARRANTY_EXPIRY
+  ASSET_MISSING
+  GENERAL
+}
+
+// ───────────── Identity & access ─────────────
+model Role {
+  id          String           @id @default(uuid())
+  name        RoleName         @unique
+  label       String
+  permissions RolePermission[]
+  users       User[]
+}
+
+model Permission {
+  id          String           @id @default(uuid())
+  code        String           @unique // e.g. "asset:write"
+  description String
+  roles       RolePermission[]
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+model Department {
+  id    String @id @default(uuid())
+  name  String @unique
+  users User[]
+}
+
+model User {
+  id               String    @id @default(uuid())
+  email            String    @unique
+  passwordHash     String
+  fullName         String
+  universityId     String?   @unique // student / staff ID
+  phone            String?
+  isActive         Boolean   @default(true)
+  roleId           String
+  role             Role      @relation(fields: [roleId], references: [id])
+  departmentId     String?
+  department       Department? @relation(fields: [departmentId], references: [id])
+  failedLogins     Int       @default(0)
+  lockedUntil      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  refreshTokens    RefreshToken[]
+  loanRequests     LoanRequest[]   @relation("LoanRequester")
+  loanApprovals    LoanRequest[]   @relation("LoanApprover")
+  loansIssued      LoanRequest[]   @relation("LoanIssuer")
+  loansReceived    LoanRequest[]   @relation("LoanReceiver")
+  bookings         LabBooking[]    @relation("BookingLecturer")
+  bookingDecisions LabBooking[]    @relation("BookingDecider")
+  responsibleFor   Asset[]
+  notifications    Notification[]
+  auditLogs        AuditLog[]
+  reportedMaint    Maintenance[]   @relation("MaintReporter")
+  assignedMaint    Maintenance[]   @relation("MaintTechnician")
+  verifiedMaint    Maintenance[]   @relation("MaintVerifier")
+  damageReports    DamageReport[]  @relation("DamageReporter")
+  damageAssoc      DamageReport[]  @relation("DamageUser")
+  lostReports      LostReport[]    @relation("LostReporter")
+  movements        AssetMovement[]
+  stocktakes       Stocktake[]
+  inspections      Inspection[]
+  documents        Document[]
+
+  @@index([roleId])
+  @@index([departmentId])
+}
+
+model RefreshToken {
+  id         String    @id @default(uuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  userAgent  String?
+  ip         String?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId])
+}
+
+// ───────────── Inventory ─────────────
+model Location {
+  id       String       @id @default(uuid())
+  name     String
+  type     LocationType
+  parentId String?
+  parent   Location?    @relation("LocationTree", fields: [parentId], references: [id])
+  children Location[]   @relation("LocationTree")
+  assets   Asset[]
+  movementsFrom AssetMovement[] @relation("MoveFrom")
+  movementsTo   AssetMovement[] @relation("MoveTo")
+
+  @@unique([parentId, name])
+  @@index([parentId])
+}
+
+model Category {
+  id          String  @id @default(uuid())
+  name        String  @unique
+  code        String  @unique // used in asset tag: IDAS-<code>-0001
+  description String?
+  assets      Asset[]
+}
+
+model Asset {
+  id               String         @id @default(uuid())
+  assetTag         String         @unique // IDAS-PC-0001
+  name             String
+  description      String?
+  categoryId       String
+  category         Category       @relation(fields: [categoryId], references: [id])
+  brand            String?
+  model            String?
+  serialNumber     String?        @unique
+  quantity         Int            @default(1)
+  isConsumable     Boolean        @default(false) // cables, adapters: tracked by quantity
+  status           AssetStatus    @default(AVAILABLE)
+  condition        AssetCondition @default(GOOD)
+  locationId       String?
+  location         Location?      @relation(fields: [locationId], references: [id])
+  responsibleUserId String?
+  responsibleUser  User?          @relation(fields: [responsibleUserId], references: [id])
+  notes            String?
+  isArchived       Boolean        @default(false) // soft delete only
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  specifications   AssetSpecification[]
+  acquisition      Acquisition?
+  movements        AssetMovement[]
+  history          AssetHistory[]
+  loanItems        LoanItem[]
+  bookingResources BookingResource[]
+  maintenance      Maintenance[]
+  damageReports    DamageReport[]
+  lostReports      LostReport[]
+  stocktakeItems   StocktakeItem[]
+  inspections      Inspection[]
+  documents        Document[]
+
+  @@index([categoryId])
+  @@index([status])
+  @@index([locationId])
+  @@index([name])
+}
+
+model AssetSpecification {
+  id        String   @id @default(uuid())
+  assetId   String
+  asset     Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  key       String   // e.g. RAM
+  value     String   // e.g. 16GB
+  isCurrent Boolean  @default(true)
+  validFrom DateTime @default(now())
+  validTo   DateTime?
+  changedById String?
+
+  @@index([assetId, key])
+}
+
+model Acquisition {
+  id              String    @id @default(uuid())
+  assetId         String    @unique
+  asset           Asset     @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  acquiredAt      DateTime?
+  supplier        String?   // supplier or donor
+  invoiceRef      String?
+  value           Decimal?  @db.Decimal(14, 2)
+  fundingSource   String?
+  warrantyStart   DateTime?
+  warrantyEnd     DateTime?
+  warrantyDetails String?
+
+  @@index([warrantyEnd])
+}
+
+// Field-level, append-only asset change history (old/new values preserved)
+model AssetHistory {
+  id        String   @id @default(uuid())
+  assetId   String
+  asset     Asset    @relation(fields: [assetId], references: [id])
+  field     String
+  oldValue  String?
+  newValue  String?
+  changedById String?
+  changedAt DateTime @default(now())
+
+  @@index([assetId, changedAt])
+}
+
+model AssetMovement {
+  id         String    @id @default(uuid())
+  assetId    String
+  asset      Asset     @relation(fields: [assetId], references: [id])
+  fromId     String?
+  from       Location? @relation("MoveFrom", fields: [fromId], references: [id])
+  toId       String?
+  to         Location? @relation("MoveTo", fields: [toId], references: [id])
+  movedById  String?
+  movedBy    User?     @relation(fields: [movedById], references: [id])
+  reason     String?
+  movedAt    DateTime  @default(now())
+
+  @@index([assetId, movedAt])
+}
+
+model Document {
+  id          String   @id @default(uuid())
+  assetId     String?
+  asset       Asset?   @relation(fields: [assetId], references: [id])
+  fileName    String
+  storedName  String   @unique
+  mimeType    String
+  sizeBytes   Int
+  uploadedById String?
+  uploadedBy  User?    @relation(fields: [uploadedById], references: [id])
+  createdAt   DateTime @default(now())
+
+  @@index([assetId])
+}
+
+// ───────────── Equipment requests / loans ─────────────
+model LoanRequest {
+  id            String            @id @default(uuid())
+  refNo         String            @unique // LN-0001
+  requesterId   String
+  requester     User              @relation("LoanRequester", fields: [requesterId], references: [id])
+  purpose       String
+  useLocation   String
+  requiredFrom  DateTime
+  dueAt         DateTime
+  notes         String?
+  status        LoanRequestStatus @default(PENDING)
+  approverId    String?
+  approver      User?             @relation("LoanApprover", fields: [approverId], references: [id])
+  decidedAt     DateTime?
+  rejectionReason String?
+  issuerId      String?
+  issuer        User?             @relation("LoanIssuer", fields: [issuerId], references: [id])
+  issuedAt      DateTime?
+  accessories   String?
+  receiverId    String?
+  receiver      User?             @relation("LoanReceiver", fields: [receiverId], references: [id])
+  returnedAt    DateTime?
+  missingAccessories String?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  items         LoanItem[]
+  inspections   Inspection[]
+
+  @@index([requesterId])
+  @@index([status, dueAt])
+}
+
+model LoanItem {
+  id               String         @id @default(uuid())
+  loanId           String
+  loan             LoanRequest    @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  assetId          String
+  asset            Asset          @relation(fields: [assetId], references: [id])
+  quantity         Int            @default(1)
+  conditionOnIssue AssetCondition?
+  conditionOnReturn AssetCondition?
+
+  @@unique([loanId, assetId])
+  @@index([assetId])
+}
+
+model Inspection {
+  id          String         @id @default(uuid())
+  assetId     String
+  asset       Asset          @relation(fields: [assetId], references: [id])
+  loanId      String?
+  loan        LoanRequest?   @relation(fields: [loanId], references: [id])
+  inspectorId String
+  inspector   User           @relation(fields: [inspectorId], references: [id])
+  conditionFound AssetCondition
+  passed      Boolean
+  damageNotes String?
+  inspectedAt DateTime       @default(now())
+
+  @@index([assetId])
+}
+
+// ───────────── Lab booking ─────────────
+model LabBooking {
+  id            String        @id @default(uuid())
+  refNo         String        @unique // BK-0001
+  lecturerId    String
+  lecturer      User          @relation("BookingLecturer", fields: [lecturerId], references: [id])
+  staffId       String
+  department    String
+  email         String
+  course        String
+  moduleCode    String
+  purpose       String
+  batchYear     String
+  studentCount  Int
+  date          DateTime      @db.Date
+  startTime     DateTime      // full timestamp (UTC) of start
+  endTime       DateTime      // full timestamp (UTC) of end
+  computersNeeded Int         @default(0)
+  software      String?
+  osSpecs       String?
+  specialRequirements String?
+  status        BookingStatus @default(PENDING)
+  deciderId     String?
+  decider       User?         @relation("BookingDecider", fields: [deciderId], references: [id])
+  decidedAt     DateTime?
+  rejectionReason String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  resources     BookingResource[]
+  approvals     BookingApproval[]
+
+  @@index([startTime, endTime])
+  @@index([status])
+  @@index([lecturerId])
+}
+
+// Requested equipment: either a specific asset or a category + quantity
+model BookingResource {
+  id         String     @id @default(uuid())
+  bookingId  String
+  booking    LabBooking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  categoryId String?
+  assetId    String?
+  asset      Asset?     @relation(fields: [assetId], references: [id])
+  quantity   Int        @default(1)
+  reserved   Boolean    @default(false) // false = requested (category+qty); true = concrete reservation of one asset
+
+  @@index([bookingId])
+  @@index([assetId])
+}
+
+model BookingApproval {
+  id        String        @id @default(uuid())
+  bookingId String
+  booking   LabBooking    @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  actorId   String
+  action    BookingStatus
+  reason    String?
+  at        DateTime      @default(now())
+
+  @@index([bookingId])
+}
+
+// ───────────── Maintenance / damage / lost ─────────────
+model Maintenance {
+  id            String            @id @default(uuid())
+  refNo         String            @unique // MT-0001
+  assetId       String
+  asset         Asset             @relation(fields: [assetId], references: [id])
+  problem       String
+  reporterId    String
+  reporter      User              @relation("MaintReporter", fields: [reporterId], references: [id])
+  reportedAt    DateTime          @default(now())
+  priority      Priority          @default(MEDIUM)
+  status        MaintenanceStatus @default(REPORTED)
+  technicianId  String?
+  technician    User?             @relation("MaintTechnician", fields: [technicianId], references: [id])
+  diagnosis     String?
+  actionTaken   String?
+  partsUsed     String?
+  cost          Decimal?          @db.Decimal(14, 2)
+  repairProvider String?
+  repairStart   DateTime?
+  repairEnd     DateTime?
+  notes         String?
+  // verification
+  repairedBy    String?
+  verifiedById  String?
+  verifiedBy    User?             @relation("MaintVerifier", fields: [verifiedById], references: [id])
+  verifiedAt    DateTime?
+  testPerformed String?
+  testPassed    Boolean?
+  verificationNotes String?
+  closedAt      DateTime?
+  updatedAt     DateTime          @updatedAt
+  steps         MaintenanceStep[]
+
+  @@index([assetId])
+  @@index([status])
+}
+
+model MaintenanceStep {
+  id            String            @id @default(uuid())
+  maintenanceId String
+  maintenance   Maintenance       @relation(fields: [maintenanceId], references: [id], onDelete: Cascade)
+  fromStatus    MaintenanceStatus?
+  toStatus      MaintenanceStatus
+  actorId       String
+  note          String?
+  at            DateTime          @default(now())
+
+  @@index([maintenanceId])
+}
+
+model DamageReport {
+  id          String       @id @default(uuid())
+  refNo       String       @unique // DM-0001
+  assetId     String
+  asset       Asset        @relation(fields: [assetId], references: [id])
+  reporterId  String
+  reporter    User         @relation("DamageReporter", fields: [reporterId], references: [id])
+  reportedAt  DateTime     @default(now())
+  location    String?
+  associatedUserId String?
+  associatedUser   User?   @relation("DamageUser", fields: [associatedUserId], references: [id])
+  description String
+  severity    Severity
+  estimatedCost Decimal?   @db.Decimal(14, 2)
+  status      DamageStatus @default(REPORTED)
+  investigationNotes String?
+  maintenanceId String?
+
+  @@index([assetId])
+}
+
+model LostReport {
+  id            String         @id @default(uuid())
+  refNo         String         @unique // LS-0001
+  assetId       String
+  asset         Asset          @relation(fields: [assetId], references: [id])
+  reporterId    String
+  reporter      User           @relation("LostReporter", fields: [reporterId], references: [id])
+  lastKnownUser String?
+  lastKnownLocation String?
+  lastSeenAt    DateTime?
+  reportedAt    DateTime       @default(now())
+  investigation String?
+  recovery      RecoveryStatus @default(INVESTIGATING)
+  notes         String?
+
+  @@index([assetId])
+}
+
+// ───────────── Stocktake ─────────────
+model Stocktake {
+  id          String          @id @default(uuid())
+  refNo       String          @unique // ST-0001
+  title       String
+  locationId  String?
+  status      StocktakeStatus @default(OPEN)
+  startedById String
+  startedBy   User            @relation(fields: [startedById], references: [id])
+  startedAt   DateTime        @default(now())
+  completedAt DateTime?
+  items       StocktakeItem[]
+}
+
+model StocktakeItem {
+  id          String           @id @default(uuid())
+  stocktakeId String
+  stocktake   Stocktake        @relation(fields: [stocktakeId], references: [id], onDelete: Cascade)
+  assetId     String
+  asset       Asset            @relation(fields: [assetId], references: [id])
+  result      StocktakeResult?
+  note        String?
+  checkedAt   DateTime?
+
+  @@unique([stocktakeId, assetId])
+}
+
+// ───────────── Notifications, audit, settings ─────────────
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      NotificationType
+  title     String
+  message   String
+  link      String?
+  readAt    DateTime?
+  emailedAt DateTime?        // reserved for future email delivery channel
+  createdAt DateTime         @default(now())
+
+  @@index([userId, readAt])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id])
+  action     String
+  module     String
+  recordId   String?
+  previous   Json?
+  next       Json?
+  ip         String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+  prevHash   String?  // hash chain for tamper evidence
+  hash       String
+
+  @@index([module, createdAt])
+  @@index([userId])
+}
+
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}

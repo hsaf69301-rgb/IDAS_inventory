@@ -1,0 +1,25 @@
+{
+  "name": "IDAS Inventory System",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "app",
+  "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+  "postCreateCommand": "bash .devcontainer/setup.sh",
+  "forwardPorts": [5173, 3000],
+  "portsAttributes": {
+    "5173": { "label": "Frontend (Vite)", "onAutoForward": "openBrowser" },
+    "3000": { "label": "Backend API / Swagger (/api/docs)" }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "Prisma.prisma",
+        "bradlc.vscode-tailwindcss",
+        "ms-playwright.playwright",
+        "cweijan.vscode-postgresql-client2"
+      ],
+      "settings": { "editor.formatOnSave": true, "typescript.tsdk": "node_modules/typescript/lib" }
+    }
+  }
+}

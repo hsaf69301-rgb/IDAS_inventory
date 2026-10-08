@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+backend/uploads/*
+!backend/uploads/.gitkeep
+coverage/
+playwright-report/
+test-results/
+*.log
+.DS_Store

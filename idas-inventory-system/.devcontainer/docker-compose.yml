@@ -1,0 +1,30 @@
+# Development container + PostgreSQL. The database is only reachable inside this private compose network
+# and uses trust authentication, so there is no password to hard-code or leak. Never reuse this for production.
+services:
+  app:
+    image: mcr.microsoft.com/devcontainers/typescript-node:1-20-bookworm
+    volumes:
+      - ..:/workspaces/${localWorkspaceFolderBasename:-idas-inventory-system}:cached
+    command: sleep infinity
+    environment:
+      DATABASE_URL: postgresql://idas@db:5432/idas?schema=public
+      VITE_API_PROXY: http://localhost:3000
+    depends_on:
+      db:
+        condition: service_healthy
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: idas
+      POSTGRES_DB: idas
+      POSTGRES_HOST_AUTH_METHOD: trust
+    volumes:
+      - devdb:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U idas -d idas"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+volumes:
+  devdb:
